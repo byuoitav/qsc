@@ -18,8 +18,8 @@ type Info struct {
 	IPAddress   string
 }
 
-// GetInfo is all the juicy details about the QSC that everyone is DYING to know about
-func (d *DSP) GetInfo(ctx context.Context) (interface{}, error) {
+// Info is all the juicy details about the QSC that everyone is DYING to know about
+func (d *DSP) Info(ctx context.Context) (interface{}, error) {
 
 	// toReturn is the struct of Hardware info
 	var details Info

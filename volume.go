@@ -100,7 +100,7 @@ func (d *DSP) VolToDb(ctx context.Context, level int) float64 {
 	return math.Log10(float64(level)/100) * 20
 }
 
-func (d *DSP) GetVolumes(ctx context.Context, blocks []string) (map[string]int, error) {
+func (d *DSP) Volumes(ctx context.Context, blocks []string) (map[string]int, error) {
 	toReturn := make(map[string]int)
 
 	for i, block := range blocks {
@@ -131,7 +131,7 @@ func (d *DSP) GetVolumes(ctx context.Context, blocks []string) (map[string]int, 
 	return toReturn, nil
 }
 
-func (d *DSP) GetMutes(ctx context.Context, blocks []string) (map[string]bool, error) {
+func (d *DSP) Mutes(ctx context.Context, blocks []string) (map[string]bool, error) {
 	toReturn := make(map[string]bool)
 
 	for i, block := range blocks {
