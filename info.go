@@ -46,6 +46,16 @@ func (d *DSP) Info(ctx context.Context) (interface{}, error) {
 	return details, nil
 }
 
+// Healthy .
+func (d *DSP) Healthy(ctx context.Context) error {
+	_, err := d.GetStatus(ctx)
+	if err != nil {
+		return fmt.Errorf("failed health check: %s", err)
+	}
+
+	return nil
+}
+
 // GetStatus will be getting responses for us I hope...
 func (d *DSP) GetStatus(ctx context.Context) (QSCStatusGetResponse, error) {
 	req := d.GetGenericStatusGetRequest(ctx)
