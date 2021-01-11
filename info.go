@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"time"
 
+	"github.com/byuoitav/connpool"
 	"github.com/fatih/color"
 	"go.uber.org/zap"
 )
@@ -37,7 +39,7 @@ func (d *DSP) Info(ctx context.Context) (interface{}, error) {
 		return details, fmt.Errorf("There was an error getting the status: %v", err)
 	}
 
-	d.Log.Info("response", zap.Any("response", resp))
+	d.infof("response", zap.Any("response", resp))
 	details.ModelName = resp.Result.Platform
 	details.PowerStatus = resp.Result.State
 
@@ -60,18 +62,55 @@ func (d *DSP) Healthy(ctx context.Context) error {
 func (d *DSP) GetStatus(ctx context.Context) (QSCStatusGetResponse, error) {
 	req := d.GetGenericStatusGetRequest(ctx)
 
-	d.Log.Info("In GetStatus...")
+	d.infof("In GetStatus...")
 	toReturn := QSCStatusGetResponse{}
 
-	resp, err := d.SendCommand(ctx, req)
+	// resp, err := d.SendCommand(ctx, req)
+	// if err != nil {
+	// 	d.infof(color.HiRedString(err.Error()))
+	// 	return toReturn, err
+	// }
+
+	toSend, err := json.Marshal(req)
 	if err != nil {
-		d.Log.Info(color.HiRedString(err.Error()))
+		return toReturn, err
+	}
+
+	var resp []byte
+	err = d.Pool.Do(ctx, func(conn connpool.Conn) error {
+		d.infof("getting status")
+
+		conn.SetWriteDeadline(time.Now().Add(3 * time.Second))
+
+		n, err := conn.Write(toSend)
+		switch {
+		case err != nil:
+			return fmt.Errorf("unable to write command to get status: %v", err)
+		case n != len(toSend):
+			return fmt.Errorf("unable to write command to get status: wrote %v/%v bytes", n, len(toSend))
+		}
+
+		deadline, ok := ctx.Deadline()
+		if !ok {
+			return fmt.Errorf("no deadline set")
+		}
+
+		resp, err = conn.ReadUntil('\x00', deadline)
+		if err != nil {
+			return fmt.Errorf("unable to read response: %w", err)
+		}
+
+		d.debugf("Got response: %v", resp)
+
+		return nil
+	})
+	if err != nil {
 		return toReturn, err
 	}
 
 	err = json.Unmarshal(resp, &toReturn)
 	if err != nil {
-		d.Log.Info(color.HiRedString(err.Error()))
+		d.infof(color.HiRedString(err.Error()))
 	}
 
 	return toReturn, err

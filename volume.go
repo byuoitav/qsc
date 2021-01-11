@@ -1,120 +1,83 @@
 package qsc
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"math"
-	"strconv"
+	"time"
 
+	"github.com/byuoitav/connpool"
 	"github.com/fatih/color"
 )
-
-func (d *DSP) SetMute(ctx context.Context, block string, mute bool) error {
-
-	//we generate our set status request, then we ship it out
-
-	req := d.GetGenericSetStatusRequest(ctx)
-	req.Params.Name = block
-	if mute {
-		req.Params.Value = 1
-	} else {
-		req.Params.Value = 0
-	}
-
-	resp, err := d.SendCommand(ctx, req)
-	if err != nil {
-		log.Printf(color.HiRedString("Error: %v", err.Error()))
-		return err
-	}
-
-	//we need to unmarshal our response, parse it for the value we care about, then role with it from there
-	val := QSCSetStatusResponse{}
-	err = json.Unmarshal(resp, &val)
-	if err != nil {
-		log.Printf(color.HiRedString("Error: %v", err.Error()))
-		return err
-	}
-
-	//otherwise we check to see what the value is set to
-	if val.Result.Name != block {
-		errmsg := fmt.Sprintf("Invalid response, the name recieved does not match the name sent %v/%v", block, val.Result.Name)
-		log.Printf(color.HiRedString(errmsg))
-		return errors.New(errmsg)
-	}
-
-	if val.Result.Value == 1.0 {
-		return nil
-	}
-	if val.Result.Value == 0.0 {
-		return nil
-	}
-	errmsg := fmt.Sprintf("[QSC-Communication] Invalid response received: %v", val.Result)
-	log.Printf(color.HiRedString(errmsg))
-	return errors.New(errmsg)
-}
-
-func (d *DSP) SetVolume(ctx context.Context, block string, volume int) error {
-
-	log.Printf("got: %v", volume)
-	req := d.GetGenericSetStatusRequest(ctx)
-	req.Params.Name = block
-
-	if volume == 0 {
-		req.Params.Value = -100
-	} else {
-		//do the logrithmic magic
-		req.Params.Value = d.VolToDb(ctx, volume)
-	}
-	log.Printf("sending: %v", req.Params.Value)
-
-	resp, err := d.SendCommand(ctx, req)
-	if err != nil {
-		log.Printf(color.HiRedString("Error: %v", err.Error()))
-		return err
-	}
-
-	//we need to unmarshal our response, parse it for the value we care about, then role with it from there
-	val := QSCSetStatusResponse{}
-	err = json.Unmarshal(resp, &val)
-	if err != nil {
-		log.Printf(color.HiRedString("Error: %v", err.Error()))
-		return err
-	}
-	if val.Result.Name != block {
-		errmsg := fmt.Sprintf("Invalid response, the name recieved does not match the name sent %v/%v", block, val.Result.Name)
-		log.Printf(color.HiRedString(errmsg))
-		return errors.New(errmsg)
-	}
-
-	return nil
-}
-
-func (d *DSP) DbToVolumeLevel(ctx context.Context, level float64) int {
-	return int(math.Pow(10, (level/20)) * 100)
-}
-
-func (d *DSP) VolToDb(ctx context.Context, level int) float64 {
-	return math.Log10(float64(level)/100) * 20
-}
 
 func (d *DSP) Volumes(ctx context.Context, blocks []string) (map[string]int, error) {
 	toReturn := make(map[string]int)
 
 	for i, block := range blocks {
-		resp, err := d.GetControlStatus(ctx, block)
+		req := d.GetGenericGetStatusRequest(ctx)
+		req.Params = append(req.Params, block)
+
+		qscResp := QSCGetStatusResponse{}
+
+		toSend, err := json.Marshal(req)
 		if err != nil {
-			log.Printf(color.HiRedString("There was an error: %v", err.Error()))
 			return toReturn, err
 		}
 
-		log.Printf(color.HiBlueString("[QSC-Communication] Response received: %+v", resp))
+		var resp []byte
+
+		err = d.Pool.Do(ctx, func(conn connpool.Conn) error {
+			d.infof("Getting volume on %v", block)
+			conn.SetWriteDeadline(time.Now().Add(3 * time.Second))
+
+			n, err := conn.Write(toSend)
+			switch {
+			case err != nil:
+				return fmt.Errorf("unable to write command to get volume for block %v: %v", block, err)
+			case n != len(toSend):
+				return fmt.Errorf("unable to write command to get volume for block %v: wrote %v/%v bytes", block, n, len(toSend))
+			}
+			// n, err = conn.Write([]byte{0x00})
+			// switch {
+			// case err != nil:
+			// 	return fmt.Errorf("unable to write command to get volume for block 2 %v: %v", block, err)
+			// case n != len([]byte{0x00}):
+			// 	return fmt.Errorf("unable to write command to get volume for block 2 %v: wrote %v/%v bytes", block, n, len([]byte{0x00}))
+			// }
+
+			deadline, ok := ctx.Deadline()
+			if !ok {
+				return fmt.Errorf("no deadline set")
+			}
+
+			resp, err = conn.ReadUntil(byte('\x00'), deadline)
+			if err != nil {
+				return fmt.Errorf("unable to read response: %w", err)
+			}
+
+			d.debugf("Got response: %v", resp)
+
+			return nil
+		})
+		if err != nil {
+			return toReturn, err
+		}
+		resp = bytes.Trim(resp, "\x00")
+		err = json.Unmarshal(resp, &qscResp)
+		if err != nil {
+			log.Printf(color.HiRedString(err.Error()))
+			return toReturn, fmt.Errorf("error unmarshaling response: %v", err)
+		}
+
+		log.Printf(color.HiBlueString("[QSC-Communication] Response received: %+v", qscResp))
 
 		//get the volume out of the dsp and run it through our equation to reverse it
 		found := false
-		for _, res := range resp.Result {
+		for _, res := range qscResp.Result {
 			if res.Name == block {
 				toReturn[blocks[i]] = d.DbToVolumeLevel(ctx, res.Value)
 				found = true
@@ -135,15 +98,58 @@ func (d *DSP) Mutes(ctx context.Context, blocks []string) (map[string]bool, erro
 	toReturn := make(map[string]bool)
 
 	for i, block := range blocks {
-		resp, err := d.GetControlStatus(ctx, block)
+		req := d.GetGenericGetStatusRequest(ctx)
+		req.Params = append(req.Params, block)
+
+		qscResp := QSCGetStatusResponse{}
+
+		toSend, err := json.Marshal(req)
 		if err != nil {
-			log.Printf(color.HiRedString("There was an error: %v", err.Error()))
+			return toReturn, err
+		}
+
+		var resp []byte
+
+		err = d.Pool.Do(ctx, func(conn connpool.Conn) error {
+			d.infof("Getting mute on %v", block)
+			conn.SetWriteDeadline(time.Now().Add(3 * time.Second))
+
+			n, err := conn.Write(toSend)
+			switch {
+			case err != nil:
+				return fmt.Errorf("unable to write command to get mute for block %v: %v", block, err)
+			case n != len(toSend):
+				return fmt.Errorf("unable to write command to get mute for block %v: wrote %v/%v bytes", block, n, len(toSend))
+			}
+
+			deadline, ok := ctx.Deadline()
+			if !ok {
+				return fmt.Errorf("no deadline set")
+			}
+
+			resp, err = conn.ReadUntil('\x00', deadline)
+			if err != nil {
+				return fmt.Errorf("unable to read response: %w", err)
+			}
+
+			d.debugf("Got response: %v", resp)
+
+			return nil
+		})
+		if err != nil {
+			return toReturn, err
+		}
+
+		resp = bytes.Trim(resp, "\x00")
+		err = json.Unmarshal(resp, &qscResp)
+		if err != nil {
+			log.Printf(color.HiRedString(err.Error()))
 			return toReturn, err
 		}
 
 		//get the volume out of the dsp and run it through our equation to reverse it
 		found := false
-		for _, res := range resp.Result {
+		for _, res := range qscResp.Result {
 			if res.Name == block {
 				if res.Value == 1.0 {
 					toReturn[blocks[i]] = true
@@ -168,55 +174,154 @@ func (d *DSP) Mutes(ctx context.Context, blocks []string) (map[string]bool, erro
 	return toReturn, nil
 }
 
-func (d *DSP) GetControlStatus(ctx context.Context, name string) (QSCGetStatusResponse, error) {
-	req := d.GetGenericGetStatusRequest(ctx)
-	req.Params = append(req.Params, name)
+func (d *DSP) SetVolume(ctx context.Context, block string, volume int) error {
 
-	toReturn := QSCGetStatusResponse{}
-
-	resp, err := d.SendCommand(ctx, req)
-	if err != nil {
-		log.Printf(color.HiRedString(err.Error()))
-		return toReturn, err
-	}
-
-	err = json.Unmarshal(resp, &toReturn)
-	if err != nil {
-		log.Printf(color.HiRedString(err.Error()))
-	}
-
-	return toReturn, err
-}
-
-func (d *DSP) SetControlStatus(ctx context.Context, name, value string) (QSCSetStatusResponse, error) {
-	var err error
+	log.Printf("got: %v", volume)
 	req := d.GetGenericSetStatusRequest(ctx)
-	val := QSCSetStatusResponse{}
+	req.Params.Name = block
 
-	req.Params.Name = name
-	req.Params.Value, err = strconv.ParseFloat(value, 64)
-	if err != nil {
-		return val, errors.New("Invalid value, must be a float")
+	if volume == 0 {
+		req.Params.Value = -100
+	} else {
+		//do the logarithmic magic
+		req.Params.Value = d.VolToDb(ctx, volume)
 	}
-	log.Printf("sending: %v:%v to %v", req.Params.Name, req.Params.Value, d.Address)
+	log.Printf("sending: %v", req.Params.Value)
 
-	resp, err := d.SendCommand(ctx, req)
+	toSend, err := json.Marshal(req)
 	if err != nil {
-		log.Printf(color.HiRedString("Error: %v", err.Error()))
-		return val, err
+		return err
+	}
+
+	var resp []byte
+	err = d.Pool.Do(ctx, func(conn connpool.Conn) error {
+		d.infof("setting volume on %v to %v", block, volume)
+
+		conn.SetWriteDeadline(time.Now().Add(3 * time.Second))
+
+		n, err := conn.Write(toSend)
+		switch {
+		case err != nil:
+			return fmt.Errorf("unable to write command to set volume: %v", err)
+		case n != len(toSend):
+			return fmt.Errorf("unable to write command to set volume: wrote %v/%v bytes", n, len(toSend))
+		}
+
+		deadline, ok := ctx.Deadline()
+		if !ok {
+			return fmt.Errorf("no deadline set")
+		}
+
+		resp, err = conn.ReadUntil('\x00', deadline)
+		if err != nil {
+			return fmt.Errorf("unable to read response: %w", err)
+		}
+
+		d.debugf("Got response: %v", resp)
+
+		return nil
+	})
+	if err != nil {
+		return err
 	}
 
 	//we need to unmarshal our response, parse it for the value we care about, then role with it from there
-	err = json.Unmarshal(resp, &val)
+	qscResp := QSCSetStatusResponse{}
+	resp = bytes.Trim(resp, "\x00")
+	err = json.Unmarshal(resp, &qscResp)
 	if err != nil {
 		log.Printf(color.HiRedString("Error: %v", err.Error()))
-		return val, err
+		return err
 	}
-	if val.Result.Name != name {
-		errmsg := fmt.Sprintf("Invalid response, the name recieved does not match the name sent %v/%v", name, val.Result.Name)
+	if qscResp.Result.Name != block {
+		errmsg := fmt.Sprintf("Invalid response, the name recieved does not match the name sent %v/%v", block, qscResp.Result.Name)
 		log.Printf(color.HiRedString(errmsg))
-		return val, errors.New(errmsg)
+		return errors.New(errmsg)
 	}
 
-	return val, nil
+	return nil
+}
+
+func (d *DSP) SetMute(ctx context.Context, block string, mute bool) error {
+
+	//we generate our set status request, then we ship it out
+
+	req := d.GetGenericSetStatusRequest(ctx)
+	req.Params.Name = block
+	if mute {
+		req.Params.Value = 1
+	} else {
+		req.Params.Value = 0
+	}
+
+	toSend, err := json.Marshal(req)
+	if err != nil {
+		return err
+	}
+
+	var resp []byte
+	err = d.Pool.Do(ctx, func(conn connpool.Conn) error {
+		d.infof("setting mute on %v to %v", block, mute)
+
+		conn.SetWriteDeadline(time.Now().Add(3 * time.Second))
+
+		n, err := conn.Write(toSend)
+		switch {
+		case err != nil:
+			return fmt.Errorf("unable to write command to set mute: %v", err)
+		case n != len(toSend):
+			return fmt.Errorf("unable to write command to set mute: wrote %v/%v bytes", n, len(toSend))
+		}
+
+		deadline, ok := ctx.Deadline()
+		if !ok {
+			return fmt.Errorf("no deadline set")
+		}
+
+		resp, err = conn.ReadUntil('\x00', deadline)
+		if err != nil {
+			return fmt.Errorf("unable to read response: %w", err)
+		}
+
+		d.debugf("Got response: %v", resp)
+
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+
+	//we need to unmarshal our response, parse it for the value we care about, then role with it from there
+	qscResp := QSCSetStatusResponse{}
+	resp = bytes.Trim(resp, "\x00")
+	err = json.Unmarshal(resp, &qscResp)
+	if err != nil {
+		log.Printf(color.HiRedString("Error: %v", err.Error()))
+		return err
+	}
+
+	//otherwise we check to see what the value is set to
+	if qscResp.Result.Name != block {
+		errmsg := fmt.Sprintf("Invalid response, the name recieved does not match the name sent %v/%v", block, qscResp.Result.Name)
+		log.Printf(color.HiRedString(errmsg))
+		return errors.New(errmsg)
+	}
+
+	if qscResp.Result.Value == 1.0 {
+		return nil
+	}
+	if qscResp.Result.Value == 0.0 {
+		return nil
+	}
+	errmsg := fmt.Sprintf("[QSC-Communication] Invalid response received: %v", qscResp.Result)
+	log.Printf(color.HiRedString(errmsg))
+	return errors.New(errmsg)
+}
+
+func (d *DSP) DbToVolumeLevel(ctx context.Context, level float64) int {
+	return int(math.Pow(10, (level/20)) * 100)
+}
+
+func (d *DSP) VolToDb(ctx context.Context, level int) float64 {
+	return math.Log10(float64(level)/100) * 20
 }
