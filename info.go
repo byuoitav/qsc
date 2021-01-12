@@ -65,12 +65,6 @@ func (d *DSP) GetStatus(ctx context.Context) (QSCStatusGetResponse, error) {
 	d.infof("In GetStatus...")
 	toReturn := QSCStatusGetResponse{}
 
-	// resp, err := d.SendCommand(ctx, req)
-	// if err != nil {
-	// 	d.infof(color.HiRedString(err.Error()))
-	// 	return toReturn, err
-	// }
-
 	toSend, err := json.Marshal(req)
 	if err != nil {
 		return toReturn, err

@@ -27,6 +27,7 @@ func (d *DSP) Volumes(ctx context.Context, blocks []string) (map[string]int, err
 		if err != nil {
 			return toReturn, err
 		}
+		toSend = append(toSend, 0x00)
 
 		var resp []byte
 
@@ -41,13 +42,6 @@ func (d *DSP) Volumes(ctx context.Context, blocks []string) (map[string]int, err
 			case n != len(toSend):
 				return fmt.Errorf("unable to write command to get volume for block %v: wrote %v/%v bytes", block, n, len(toSend))
 			}
-			// n, err = conn.Write([]byte{0x00})
-			// switch {
-			// case err != nil:
-			// 	return fmt.Errorf("unable to write command to get volume for block 2 %v: %v", block, err)
-			// case n != len([]byte{0x00}):
-			// 	return fmt.Errorf("unable to write command to get volume for block 2 %v: wrote %v/%v bytes", block, n, len([]byte{0x00}))
-			// }
 
 			deadline, ok := ctx.Deadline()
 			if !ok {
@@ -60,6 +54,7 @@ func (d *DSP) Volumes(ctx context.Context, blocks []string) (map[string]int, err
 			}
 
 			d.debugf("Got response: %v", resp)
+			fmt.Printf("resp: %s\n", resp)
 
 			return nil
 		})
@@ -73,7 +68,7 @@ func (d *DSP) Volumes(ctx context.Context, blocks []string) (map[string]int, err
 			return toReturn, fmt.Errorf("error unmarshaling response: %v", err)
 		}
 
-		log.Printf(color.HiBlueString("[QSC-Communication] Response received: %+v", qscResp))
+		log.Printf(color.HiBlueString("[QSC-Communication] Response received: %+v\n", qscResp))
 
 		//get the volume out of the dsp and run it through our equation to reverse it
 		found := false
@@ -107,6 +102,7 @@ func (d *DSP) Mutes(ctx context.Context, blocks []string) (map[string]bool, erro
 		if err != nil {
 			return toReturn, err
 		}
+		toSend = append(toSend, 0x00)
 
 		var resp []byte
 
@@ -192,6 +188,7 @@ func (d *DSP) SetVolume(ctx context.Context, block string, volume int) error {
 	if err != nil {
 		return err
 	}
+	toSend = append(toSend, 0x00)
 
 	var resp []byte
 	err = d.Pool.Do(ctx, func(conn connpool.Conn) error {
@@ -258,6 +255,7 @@ func (d *DSP) SetMute(ctx context.Context, block string, mute bool) error {
 	if err != nil {
 		return err
 	}
+	toSend = append(toSend, 0x00)
 
 	var resp []byte
 	err = d.Pool.Do(ctx, func(conn connpool.Conn) error {
