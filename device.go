@@ -8,20 +8,21 @@ import (
 	"time"
 
 	"github.com/byuoitav/connpool"
+	"go.uber.org/zap"
 )
 
 type DSP struct {
-	Address string
-	Pool    *connpool.Pool
-	Log     Logger
+	pool *connpool.Pool
+	log  *zap.Logger
 }
 
 const _kTimeoutInSeconds = 2.0
 
 func New(addr string, opts ...Option) *DSP {
 	options := options{
-		ttl:   _defaultTTL,
-		delay: _defaultDelay,
+		ttl:    30 * time.Second,
+		delay:  500 * time.Millisecond,
+		logger: zap.NewNop(),
 	}
 
 	for _, o := range opts {
@@ -29,18 +30,17 @@ func New(addr string, opts ...Option) *DSP {
 	}
 
 	d := &DSP{
-		Address: addr,
-		Pool: &connpool.Pool{
+		pool: &connpool.Pool{
 			TTL:    options.ttl,
 			Delay:  options.delay,
-			Logger: options.logger,
+			Logger: options.logger.Sugar(),
 		},
-		Log: options.logger,
+		log: options.logger,
 	}
 
-	d.Pool.NewConnection = func(ctx context.Context) (net.Conn, error) {
+	d.pool.NewConnection = func(ctx context.Context) (net.Conn, error) {
 		dial := net.Dialer{}
-		conn, err := dial.DialContext(ctx, "tcp", d.Address+":1710")
+		conn, err := dial.DialContext(ctx, "tcp", addr+":1710")
 		if err != nil {
 			return nil, err
 		}

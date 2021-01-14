@@ -1,16 +1,15 @@
 package qsc
 
-import "time"
+import (
+	"time"
 
-var (
-	_defaultTTL   = 30 * time.Second
-	_defaultDelay = 500 * time.Millisecond
+	"go.uber.org/zap"
 )
 
 type options struct {
 	ttl    time.Duration
 	delay  time.Duration
-	logger Logger
+	logger *zap.Logger
 }
 
 // Option configures how we create the DSP.
@@ -45,7 +44,7 @@ func WithDelay(t time.Duration) Option {
 // WithLogger adds a logger to DSP.
 // DSP will log appropriate information about the underlying connection and the commands being sent.
 // The default value is nil, meaning that no logs are written.
-func WithLogger(l Logger) Option {
+func WithLogger(l *zap.Logger) Option {
 	return optionFunc(func(o *options) {
 		o.logger = l
 	})

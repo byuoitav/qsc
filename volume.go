@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/byuoitav/connpool"
-	"github.com/fatih/color"
+	"go.uber.org/zap"
 )
 
 func (d *DSP) Volumes(ctx context.Context, blocks []string) (map[string]int, error) {
@@ -31,8 +31,8 @@ func (d *DSP) Volumes(ctx context.Context, blocks []string) (map[string]int, err
 
 		var resp []byte
 
-		err = d.Pool.Do(ctx, func(conn connpool.Conn) error {
-			d.infof("Getting volume on %v", block)
+		err = d.pool.Do(ctx, func(conn connpool.Conn) error {
+			d.log.Info("Getting volume on %v", zap.String("block", block))
 			conn.SetWriteDeadline(time.Now().Add(3 * time.Second))
 
 			n, err := conn.Write(toSend)
@@ -53,7 +53,7 @@ func (d *DSP) Volumes(ctx context.Context, blocks []string) (map[string]int, err
 				return fmt.Errorf("unable to read response: %w", err)
 			}
 
-			d.debugf("Got response: %v", resp)
+			d.log.Debug("Got response: %v", zap.Any("response", resp))
 			fmt.Printf("resp: %s\n", resp)
 
 			return nil
@@ -64,11 +64,11 @@ func (d *DSP) Volumes(ctx context.Context, blocks []string) (map[string]int, err
 		resp = bytes.Trim(resp, "\x00")
 		err = json.Unmarshal(resp, &qscResp)
 		if err != nil {
-			log.Printf(color.HiRedString(err.Error()))
+			log.Printf(err.Error())
 			return toReturn, fmt.Errorf("error unmarshaling response: %v", err)
 		}
 
-		log.Printf(color.HiBlueString("[QSC-Communication] Response received: %+v\n", qscResp))
+		log.Printf("[QSC-Communication] Response received: %+v\n", qscResp)
 
 		//get the volume out of the dsp and run it through our equation to reverse it
 		found := false
@@ -106,8 +106,8 @@ func (d *DSP) Mutes(ctx context.Context, blocks []string) (map[string]bool, erro
 
 		var resp []byte
 
-		err = d.Pool.Do(ctx, func(conn connpool.Conn) error {
-			d.infof("Getting mute on %v", block)
+		err = d.pool.Do(ctx, func(conn connpool.Conn) error {
+			d.log.Info("Getting mute on %v", zap.String("block", block))
 			conn.SetWriteDeadline(time.Now().Add(3 * time.Second))
 
 			n, err := conn.Write(toSend)
@@ -128,7 +128,7 @@ func (d *DSP) Mutes(ctx context.Context, blocks []string) (map[string]bool, erro
 				return fmt.Errorf("unable to read response: %w", err)
 			}
 
-			d.debugf("Got response: %v", resp)
+			d.log.Debug("Got response: %v", zap.Any("response", resp))
 
 			return nil
 		})
@@ -139,7 +139,7 @@ func (d *DSP) Mutes(ctx context.Context, blocks []string) (map[string]bool, erro
 		resp = bytes.Trim(resp, "\x00")
 		err = json.Unmarshal(resp, &qscResp)
 		if err != nil {
-			log.Printf(color.HiRedString(err.Error()))
+			log.Printf(err.Error())
 			return toReturn, err
 		}
 
@@ -163,7 +163,7 @@ func (d *DSP) Mutes(ctx context.Context, blocks []string) (map[string]bool, erro
 		}
 
 		errmsg := "[QSC-Communication] No value returned with the name matching the requested state"
-		log.Printf(color.HiRedString(errmsg))
+		log.Printf(errmsg)
 		return toReturn, errors.New(errmsg)
 	}
 
@@ -191,8 +191,8 @@ func (d *DSP) SetVolume(ctx context.Context, block string, volume int) error {
 	toSend = append(toSend, 0x00)
 
 	var resp []byte
-	err = d.Pool.Do(ctx, func(conn connpool.Conn) error {
-		d.infof("setting volume on %v to %v", block, volume)
+	err = d.pool.Do(ctx, func(conn connpool.Conn) error {
+		d.log.Info("setting volume on %v to %v", zap.String("block", block), zap.Int("level", volume))
 
 		conn.SetWriteDeadline(time.Now().Add(3 * time.Second))
 
@@ -214,7 +214,7 @@ func (d *DSP) SetVolume(ctx context.Context, block string, volume int) error {
 			return fmt.Errorf("unable to read response: %w", err)
 		}
 
-		d.debugf("Got response: %v", resp)
+		d.log.Debug("Got response: %v", zap.Any("response", resp))
 
 		return nil
 	})
@@ -227,12 +227,12 @@ func (d *DSP) SetVolume(ctx context.Context, block string, volume int) error {
 	resp = bytes.Trim(resp, "\x00")
 	err = json.Unmarshal(resp, &qscResp)
 	if err != nil {
-		log.Printf(color.HiRedString("Error: %v", err.Error()))
+		log.Printf("Error: %v", err.Error())
 		return err
 	}
 	if qscResp.Result.Name != block {
 		errmsg := fmt.Sprintf("Invalid response, the name recieved does not match the name sent %v/%v", block, qscResp.Result.Name)
-		log.Printf(color.HiRedString(errmsg))
+		log.Printf(errmsg)
 		return errors.New(errmsg)
 	}
 
@@ -258,8 +258,8 @@ func (d *DSP) SetMute(ctx context.Context, block string, mute bool) error {
 	toSend = append(toSend, 0x00)
 
 	var resp []byte
-	err = d.Pool.Do(ctx, func(conn connpool.Conn) error {
-		d.infof("setting mute on %v to %v", block, mute)
+	err = d.pool.Do(ctx, func(conn connpool.Conn) error {
+		d.log.Info("setting mute on %v to %v", zap.String("block", block), zap.Bool("mute", mute))
 
 		conn.SetWriteDeadline(time.Now().Add(3 * time.Second))
 
@@ -281,7 +281,7 @@ func (d *DSP) SetMute(ctx context.Context, block string, mute bool) error {
 			return fmt.Errorf("unable to read response: %w", err)
 		}
 
-		d.debugf("Got response: %v", resp)
+		d.log.Debug("Got response: %v", zap.Any("response", resp))
 
 		return nil
 	})
@@ -294,14 +294,14 @@ func (d *DSP) SetMute(ctx context.Context, block string, mute bool) error {
 	resp = bytes.Trim(resp, "\x00")
 	err = json.Unmarshal(resp, &qscResp)
 	if err != nil {
-		log.Printf(color.HiRedString("Error: %v", err.Error()))
+		log.Printf("Error: %v", err.Error())
 		return err
 	}
 
 	//otherwise we check to see what the value is set to
 	if qscResp.Result.Name != block {
 		errmsg := fmt.Sprintf("Invalid response, the name recieved does not match the name sent %v/%v", block, qscResp.Result.Name)
-		log.Printf(color.HiRedString(errmsg))
+		log.Printf(errmsg)
 		return errors.New(errmsg)
 	}
 
@@ -312,7 +312,7 @@ func (d *DSP) SetMute(ctx context.Context, block string, mute bool) error {
 		return nil
 	}
 	errmsg := fmt.Sprintf("[QSC-Communication] Invalid response received: %v", qscResp.Result)
-	log.Printf(color.HiRedString(errmsg))
+	log.Printf(errmsg)
 	return errors.New(errmsg)
 }
 

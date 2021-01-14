@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/byuoitav/connpool"
-	"github.com/fatih/color"
 	"go.uber.org/zap"
 )
 
@@ -26,12 +25,18 @@ func (d *DSP) Info(ctx context.Context) (interface{}, error) {
 	// toReturn is the struct of Hardware info
 	var details Info
 
+	var addr string
+	d.pool.Do(ctx, func(conn connpool.Conn) error {
+		addr = conn.RemoteAddr().String()
+		return nil
+	})
+
 	// get the hostname
-	addr, e := net.LookupAddr(d.Address)
+	hostname, e := net.LookupAddr(addr)
 	if e != nil {
-		details.Hostname = d.Address
+		details.Hostname = addr
 	} else {
-		details.Hostname = strings.Trim(addr[0], ".")
+		details.Hostname = strings.Trim(hostname[0], ".")
 	}
 
 	resp, err := d.GetStatus(ctx)
@@ -39,11 +44,11 @@ func (d *DSP) Info(ctx context.Context) (interface{}, error) {
 		return details, fmt.Errorf("There was an error getting the status: %v", err)
 	}
 
-	d.infof("response", zap.Any("response", resp))
+	d.log.Info("response", zap.Any("response", resp))
 	details.ModelName = resp.Result.Platform
 	details.PowerStatus = resp.Result.State
 
-	details.IPAddress = d.Address
+	details.IPAddress = addr
 
 	return details, nil
 }
@@ -62,7 +67,7 @@ func (d *DSP) Healthy(ctx context.Context) error {
 func (d *DSP) GetStatus(ctx context.Context) (QSCStatusGetResponse, error) {
 	req := d.GetGenericStatusGetRequest(ctx)
 
-	d.infof("In GetStatus...")
+	d.log.Info("In GetStatus...")
 	toReturn := QSCStatusGetResponse{}
 
 	toSend, err := json.Marshal(req)
@@ -71,8 +76,8 @@ func (d *DSP) GetStatus(ctx context.Context) (QSCStatusGetResponse, error) {
 	}
 
 	var resp []byte
-	err = d.Pool.Do(ctx, func(conn connpool.Conn) error {
-		d.infof("getting status")
+	err = d.pool.Do(ctx, func(conn connpool.Conn) error {
+		d.log.Info("getting status")
 
 		conn.SetWriteDeadline(time.Now().Add(3 * time.Second))
 
@@ -94,7 +99,7 @@ func (d *DSP) GetStatus(ctx context.Context) (QSCStatusGetResponse, error) {
 			return fmt.Errorf("unable to read response: %w", err)
 		}
 
-		d.debugf("Got response: %v", resp)
+		d.log.Debug("Got response: %v", zap.Any("response", resp))
 
 		return nil
 	})
@@ -104,7 +109,7 @@ func (d *DSP) GetStatus(ctx context.Context) (QSCStatusGetResponse, error) {
 
 	err = json.Unmarshal(resp, &toReturn)
 	if err != nil {
-		d.infof(color.HiRedString(err.Error()))
+		d.log.Info(err.Error())
 	}
 
 	return toReturn, err
