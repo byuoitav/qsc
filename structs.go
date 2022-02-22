@@ -39,10 +39,16 @@ type QSCGetStatusResult struct {
 
 // QSCStatusGetResponse is the values that we are getting back from the StatusGet method
 type QSCStatusGetResult struct {
-	Platform   string
-	State      string
-	DesignName string
-	DesignCode string
+	Platform    string `json:"Platform"`
+	State       string `json:"State"`
+	DesignName  string `json:"DesignName"`
+	DesignCode  string `json:"DesignCode"`
+	IsRedundant bool   `json:"IsRedundant"`
+	IsEmulator  bool   `json:"IsEmulator"`
+	Status      struct {
+		Code   int    `json:"Code"`
+		String string `json:"String"`
+	} `json:"Status"`
 }
 
 type QSCGetStatusRequest struct {

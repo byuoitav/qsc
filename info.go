@@ -1,9 +1,12 @@
 package qsc
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
+	"strings"
 	"time"
 
 	"github.com/byuoitav/connpool"
@@ -11,9 +14,12 @@ import (
 )
 
 type Info struct {
-	ModelName   string
-	PowerStatus string
-	IPAddress   string
+	Hostname   string
+	ModelName  string
+	IPAddress  string
+	State      string
+	StatusCode string
+	RawState   string
 }
 
 // Info is all the juicy details about the QSC that everyone is DYING to know about
@@ -22,6 +28,20 @@ func (d *DSP) Info(ctx context.Context) (interface{}, error) {
 	// toReturn is the struct of Hardware info
 	var details Info
 
+	var addr string
+	d.pool.Do(ctx, func(conn connpool.Conn) error {
+		addr = strings.Split(conn.RemoteAddr().String(), ":")[0]
+		return nil
+	})
+
+	// get the hostname
+	hostname, e := net.LookupAddr(addr)
+	if e != nil {
+		details.Hostname = addr
+	} else {
+		details.Hostname = strings.Trim(hostname[0], ".")
+	}
+
 	resp, err := d.GetStatus(ctx)
 	if err != nil {
 		return details, fmt.Errorf("there was an error getting the status: %v", err)
@@ -29,7 +49,13 @@ func (d *DSP) Info(ctx context.Context) (interface{}, error) {
 
 	d.log.Info("response", zap.Any("response", resp))
 	details.ModelName = resp.Result.Platform
-	details.PowerStatus = resp.Result.State
+	details.State = resp.Result.State
+	details.StatusCode = resp.Result.Status.String
+
+	details.IPAddress = addr
+
+	rawString, _ := json.Marshal(resp)
+	details.RawState = string(rawString)
 
 	return details, nil
 }
@@ -56,6 +82,8 @@ func (d *DSP) GetStatus(ctx context.Context) (QSCStatusGetResponse, error) {
 		return toReturn, err
 	}
 
+	toSend = append(toSend, 0x00)
+
 	var resp []byte
 	err = d.pool.Do(ctx, func(conn connpool.Conn) error {
 		d.log.Info("getting status")
@@ -72,7 +100,7 @@ func (d *DSP) GetStatus(ctx context.Context) (QSCStatusGetResponse, error) {
 
 		deadline, ok := ctx.Deadline()
 		if !ok {
-			return fmt.Errorf("no deadline set")
+			deadline = time.Now().Add(3 * time.Second)
 		}
 
 		resp, err = conn.ReadUntil('\x00', deadline)
@@ -87,6 +115,8 @@ func (d *DSP) GetStatus(ctx context.Context) (QSCStatusGetResponse, error) {
 	if err != nil {
 		return toReturn, err
 	}
+
+	resp = bytes.Trim(resp, "\x00")
 
 	err = json.Unmarshal(resp, &toReturn)
 	if err != nil {
