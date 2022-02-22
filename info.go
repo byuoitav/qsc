@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net"
-	"strings"
 	"time"
 
 	"github.com/byuoitav/connpool"
@@ -13,7 +11,6 @@ import (
 )
 
 type Info struct {
-	Hostname    string
 	ModelName   string
 	PowerStatus string
 	IPAddress   string
@@ -25,30 +22,14 @@ func (d *DSP) Info(ctx context.Context) (interface{}, error) {
 	// toReturn is the struct of Hardware info
 	var details Info
 
-	var addr string
-	d.pool.Do(ctx, func(conn connpool.Conn) error {
-		addr = conn.RemoteAddr().String()
-		return nil
-	})
-
-	// get the hostname
-	hostname, e := net.LookupAddr(addr)
-	if e != nil {
-		details.Hostname = addr
-	} else {
-		details.Hostname = strings.Trim(hostname[0], ".")
-	}
-
 	resp, err := d.GetStatus(ctx)
 	if err != nil {
-		return details, fmt.Errorf("There was an error getting the status: %v", err)
+		return details, fmt.Errorf("there was an error getting the status: %v", err)
 	}
 
 	d.log.Info("response", zap.Any("response", resp))
 	details.ModelName = resp.Result.Platform
 	details.PowerStatus = resp.Result.State
-
-	details.IPAddress = addr
 
 	return details, nil
 }
